@@ -1,6 +1,6 @@
 # Dyslexia Reader — Platform
 
-The web platform for Dyslexia Reader: a dashboard, account services, synchronized reading preferences, and cloud text-to-speech.
+The web platform for Dyslexia Reader: a React dashboard and Java Spring Boot backend for account services, synchronized reading preferences, and cloud text-to-speech.
 
 **Repository:** [DyslexiaPlatform](https://github.com/Dyslexia-Project/DyslexiaPlatform). The native desktop client is maintained in [DyslexiaApp](https://github.com/Dyslexia-Project/DyslexiaApp).
 
@@ -61,21 +61,41 @@ React + JavaScript dashboard         Native C++ desktop app
              |                               |
              +----------- HTTPS -------------+
                              |
-                 Authentication and REST APIs
+                  Java Spring Boot REST API
+              profiles, devices, access control,
+                  subscriptions, usage, TTS
                              |
                +-------------+--------------+
+             JDBC                         HTTPS
                |                            |
-       Supabase Auth + Postgres       Trusted cloud service
-       profiles, devices, settings    entitlements, usage, TTS
-                                            |
-                                  Speech and billing providers
+     Supabase managed PostgreSQL   Speech and billing providers
 ```
 
-Supabase is the proposed backend platform, with Postgres as the database and Supabase Auth for identity. Its [generated REST API](https://supabase.com/docs/guides/api) can serve authorized preference and device data. Cloud speech, subscription enforcement, and billing webhooks require trusted server-side handlers.
+Use Java with [Spring Boot](https://docs.spring.io/spring-boot/reference/web/index.html) for the backend. Start with one deployable application, organized into modules for reading profiles, devices, speech, subscriptions, usage, and administration. The team already knows Spring Boot, so this uses existing experience while keeping deployment straightforward.
+
+Supabase provides managed PostgreSQL and Supabase Auth. Clients sign in through Supabase Auth and send their access tokens to the Spring Boot API. [Spring Security](https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/jwt.html) validates token signatures, issuer, audience, expiry, and the configured signing algorithms before application authorization checks. The Java service owns business logic, profile synchronization, cloud speech requests, quotas, and billing webhooks.
+
+| Component | Technology and responsibility |
+| --- | --- |
+| Web frontend | React with JavaScript: dashboard, reading-profile preview, account and usage screens. |
+| Backend | Java with Spring Boot: REST endpoints, validation, business logic, and provider integrations. |
+| API security | Spring Security: access-token validation and authorization. |
+| Database | Supabase managed PostgreSQL: application records, accessed by the backend through JDBC. |
+| Identity | Supabase Auth: sign-in and session issuance. |
+
+Host the Spring Boot service separately from the database. Connect using a bounded JDBC connection pool over an encrypted connection. For a long-running service, choose a direct database connection where supported or the session pooler when required by the hosting network; size the pool against the database's connection budget. See [Supabase's connection guidance](https://supabase.com/docs/guides/database/connecting-to-postgres).
 
 The dashboard uses [React's browser UI APIs](https://react.dev/reference/react-dom). It is deployed separately from the native app; opening a browser is not part of the local capture/OCR path.
 
-Use two repositories: `DyslexiaApp` for the desktop client and `DyslexiaPlatform` for the dashboard and backend. Keep server-side handlers and database migrations alongside the dashboard in this repository; the server implementation language is a separate decision from the JavaScript frontend requirement.
+Use two repositories: `DyslexiaApp` for the desktop client and `DyslexiaPlatform` for the dashboard and backend. Keep the React app in `frontend/`, the Spring Boot application in `backend/`, versioned SQL migrations in `database/`, and API contracts and project documentation in `docs/`. These directories describe the planned layout; the implementation has not been scaffolded yet. The native desktop UI and browser dashboard do not share UI components.
+
+## Managed database (DBaaS)
+
+Use a database-as-a-service for the hosted platform, with Supabase PostgreSQL as the proposed provider. This reduces database infrastructure work and lets the team focus on the reader, backend, and client requirements. Spring Boot remains the application backend; the database service does not host the Java application.
+
+The team still owns schema design, migrations, indexes, access rules, connection limits, and recovery testing. Confirm the selected plan's costs, region, availability, backup retention, and restore capabilities before deployment. [Backup features depend on the Supabase plan](https://supabase.com/docs/guides/platform/backups); do not assume a free development project includes production recovery guarantees.
+
+Use separate development, staging, and production databases, and run persistence tests against disposable PostgreSQL instances. Keep application data in standard PostgreSQL tables and maintain versioned migrations to make a future database move easier. Replacing Supabase Auth would be a separate migration from moving the database.
 
 ## Accounts, data, and API contracts
 
@@ -83,7 +103,9 @@ Use authenticated HTTPS requests and versioned JSON contracts. Desktop sign-in s
 
 Initial data entities are user profiles, registered devices, reading profiles, subscription entitlements, usage events, and feedback. Captured screenshots and OCR text are not part of settings synchronization.
 
-Enable [row-level security](https://supabase.com/docs/guides/database/postgres/row-level-security) for user-owned data. Clients receive only public project configuration and their own session credentials. Service-role credentials and cloud provider keys stay in trusted server environments.
+Clients access application data through the Spring Boot API. Derive the current user from the validated access token and enforce ownership and administrator permissions in the backend. Database credentials, service-role credentials, and cloud provider keys stay in trusted server environments; use a dedicated database role with only the required permissions.
+
+A JDBC connection does not automatically inherit the signed-in user's JWT context. Do not assume Supabase policies based on `auth.uid()` protect backend queries without an explicitly designed database context. Apply [row-level security](https://supabase.com/docs/guides/database/postgres/row-level-security) to tables exposed through Supabase's Data API, and disable or restrict that API for application tables that clients access only through Spring Boot. Test the actual database role and access path used by the backend.
 
 Users must not be able to grant themselves a paid plan or edit authoritative usage records. Server-side handlers validate entitlement, enforce quotas, and record usage; verified billing webhooks update subscription state. Failed requests and retries need defined metering behavior to avoid duplicate billing.
 
@@ -101,8 +123,8 @@ These are responsibility assignments to agree as a team, not job titles requirin
 | 4 | Engine and OCR | Engine interfaces, capture/OCR integration, language handling, performance. |
 | 5 | Reader and speech | Text rendering, reading customization, local TTS, desktop cloud-provider integration. |
 | 6 | Web frontend | React dashboard, interactive settings preview, account and subscription views. |
-| 7 | Backend and data | Auth integration, Supabase migrations, access policies, settings sync, API contracts. |
-| 8 | Cloud services and billing | Speech provider integration, quotas, billing integration, cost tracking. |
+| 7 | Backend and data | Spring Boot REST API, Spring Security, PostgreSQL migrations, access rules, settings sync, API contracts. |
+| 8 | Cloud services and billing | Spring Boot speech and billing modules, provider integration, quotas, cost tracking. |
 | 9 | Quality and delivery | CI/CD, test coordination, release artifacts, environments, operational checks. |
 
 This table covers the whole project, including work in the desktop repository. Everyone contributes reviews and tests; quality and deployment knowledge must not depend on one teammate.
@@ -126,7 +148,8 @@ Plan pull-request checks and separate staging and production environments.
 | Area | Proposed checks and delivery behavior |
 | --- | --- |
 | Frontend | Lint, production build, meaningful UI tests, keyboard and accessibility checks. |
-| Database | Apply migrations to a disposable database; test user isolation and protected subscription fields. |
+| Backend | Compile and package Spring Boot; run unit and integration tests for business rules, validation, and provider adapters. |
+| Database | Apply migrations to disposable PostgreSQL; test constraints, runtime database permissions, and protected subscription fields. |
 | API | Validate requests and contracts; test auth, quota enforcement, retries, and provider failures. |
 | Integration | Verify desktop/platform compatibility and continued local use during network failure. |
 | Subscription flows | Use provider test modes for subscriptions, webhook verification, cancellations, and limits. |
@@ -156,7 +179,7 @@ Add organization owner/member roles only if a team or school plan is implemented
 - Project branding, source licenses, and named team assignments.
 - Initial supported OCR and speech languages, confirmed through the desktop prototype.
 - Speech and billing providers, pricing, and monthly allowances.
-- Hosting, server-side runtime, and authentication callback design.
+- Spring Boot hosting, supported Java and Spring Boot versions, and authentication callback design.
 - Whether settings sync is free or included in a subscription.
 
 Build and deployment commands will be added once the implementation and tooling are selected.
