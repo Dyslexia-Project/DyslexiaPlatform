@@ -68,22 +68,22 @@ React + JavaScript dashboard         Native C++ desktop app
                +-------------+--------------+
              JDBC                         HTTPS
                |                            |
-     Supabase managed PostgreSQL   Speech and billing providers
+          Managed PostgreSQL       Speech and billing providers
 ```
 
 Use Java with [Spring Boot](https://docs.spring.io/spring-boot/reference/web/index.html) for the backend. Start with one deployable application, organized into modules for reading profiles, devices, speech, subscriptions, usage, and administration. The team already knows Spring Boot, so this uses existing experience while keeping deployment straightforward.
 
-Supabase provides managed PostgreSQL and Supabase Auth. Clients sign in through Supabase Auth and send their access tokens to the Spring Boot API. [Spring Security](https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/jwt.html) validates token signatures, issuer, audience, expiry, and the configured signing algorithms before application authorization checks. The Java service owns business logic, profile synchronization, cloud speech requests, quotas, and billing webhooks.
+Use standard PostgreSQL hosted by a managed database provider. Clients authenticate through the platform's sign-in flow and send their access tokens to the Spring Boot API. [Spring Security](https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/jwt.html) validates token signatures, issuer, audience, expiry, and the configured signing algorithms before application authorization checks. The identity and session-management implementation remains to be selected. The Java service owns business logic, profile synchronization, cloud speech requests, quotas, and billing webhooks.
 
 | Component | Technology and responsibility |
 | --- | --- |
 | Web frontend | React with JavaScript: dashboard, reading-profile preview, account and usage screens. |
 | Backend | Java with Spring Boot: REST endpoints, validation, business logic, and provider integrations. |
 | API security | Spring Security: access-token validation and authorization. |
-| Database | Supabase managed PostgreSQL: application records, accessed by the backend through JDBC. |
-| Identity | Supabase Auth: sign-in and session issuance. |
+| Database | Managed PostgreSQL: application records, accessed by the backend through JDBC. |
+| Identity | Platform sign-in and session management; implementation to be selected. |
 
-Host the Spring Boot service separately from the database. Connect using a bounded JDBC connection pool over an encrypted connection. For a long-running service, choose a direct database connection where supported or the session pooler when required by the hosting network; size the pool against the database's connection budget. See [Supabase's connection guidance](https://supabase.com/docs/guides/database/connecting-to-postgres).
+Host the Spring Boot service separately from the database. Connect using a bounded JDBC connection pool over an encrypted connection, and size the pool against the managed database's connection budget. Keep credentials and connection details in environment-specific configuration. See [Spring Boot's SQL database support](https://docs.spring.io/spring-boot/reference/data/sql.html).
 
 The dashboard uses [React's browser UI APIs](https://react.dev/reference/react-dom). It is deployed separately from the native app; opening a browser is not part of the local capture/OCR path.
 
@@ -91,11 +91,11 @@ Use two repositories: `DyslexiaApp` for the desktop client and `DyslexiaPlatform
 
 ## Managed database (DBaaS)
 
-Use a database-as-a-service for the hosted platform, with Supabase PostgreSQL as the proposed provider. This reduces database infrastructure work and lets the team focus on the reader, backend, and client requirements. Spring Boot remains the application backend; the database service does not host the Java application.
+Use managed PostgreSQL as the database-as-a-service for the hosted platform; the hosting provider remains to be selected. This reduces database infrastructure work and lets the team focus on the reader, backend, and client requirements. Spring Boot remains the application backend; the database service does not host the Java application.
 
-The team still owns schema design, migrations, indexes, access rules, connection limits, and recovery testing. Confirm the selected plan's costs, region, availability, backup retention, and restore capabilities before deployment. [Backup features depend on the Supabase plan](https://supabase.com/docs/guides/platform/backups); do not assume a free development project includes production recovery guarantees.
+The team still owns schema design, migrations, indexes, access rules, connection limits, and recovery testing. Confirm the selected provider and plan's costs, region, availability, backup retention, and restore capabilities before deployment.
 
-Use separate development, staging, and production databases, and run persistence tests against disposable PostgreSQL instances. Keep application data in standard PostgreSQL tables and maintain versioned migrations to make a future database move easier. Replacing Supabase Auth would be a separate migration from moving the database.
+Use separate development, staging, and production databases, and run persistence tests against disposable PostgreSQL instances. Keep application data in standard PostgreSQL tables and maintain versioned migrations to make a future database move easier. Keep database hosting and identity integration as separate choices.
 
 ## Accounts, data, and API contracts
 
@@ -103,9 +103,9 @@ Use authenticated HTTPS requests and versioned JSON contracts. Desktop sign-in s
 
 Initial data entities are user profiles, registered devices, reading profiles, subscription entitlements, usage events, and feedback. Captured screenshots and OCR text are not part of settings synchronization.
 
-Clients access application data through the Spring Boot API. Derive the current user from the validated access token and enforce ownership and administrator permissions in the backend. Database credentials, service-role credentials, and cloud provider keys stay in trusted server environments; use a dedicated database role with only the required permissions.
+Clients access application data through the Spring Boot API. Derive the current user from the validated access token and enforce ownership and administrator permissions in the backend. Database credentials, identity-service secrets, and cloud provider keys stay in trusted server environments; use a dedicated database role with only the required permissions.
 
-A JDBC connection does not automatically inherit the signed-in user's JWT context. Do not assume Supabase policies based on `auth.uid()` protect backend queries without an explicitly designed database context. Apply [row-level security](https://supabase.com/docs/guides/database/postgres/row-level-security) to tables exposed through Supabase's Data API, and disable or restrict that API for application tables that clients access only through Spring Boot. Test the actual database role and access path used by the backend.
+A JDBC connection does not automatically inherit the signed-in user's identity. Scope user-owned data access to the authenticated user, and test that one user cannot read or modify another user's records. Verify permissions using the runtime database role rather than an administrator connection. The browser and desktop clients never connect directly to PostgreSQL.
 
 Users must not be able to grant themselves a paid plan or edit authoritative usage records. Server-side handlers validate entitlement, enforce quotas, and record usage; verified billing webhooks update subscription state. Failed requests and retries need defined metering behavior to avoid duplicate billing.
 
@@ -179,7 +179,8 @@ Add organization owner/member roles only if a team or school plan is implemented
 - Project branding, source licenses, and named team assignments.
 - Initial supported OCR and speech languages, confirmed through the desktop prototype.
 - Speech and billing providers, pricing, and monthly allowances.
-- Spring Boot hosting, supported Java and Spring Boot versions, and authentication callback design.
+- Spring Boot hosting, managed PostgreSQL provider, and supported Java and Spring Boot versions.
+- Identity and session-management implementation, including the desktop authentication callback.
 - Whether settings sync is free or included in a subscription.
 
 Build and deployment commands will be added once the implementation and tooling are selected.
